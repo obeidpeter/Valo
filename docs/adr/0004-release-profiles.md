@@ -28,6 +28,15 @@ The promotion adapter has two profiles selected by `RELEASE_PROFILE`:
   `RELEASE_RUNTIME_STATE=HOLD` is a plain maintenance switch. No recovery
   plan, activation permit, held evidence or drained-traffic attestation is
   read. `ops:postdeploy` remains the after-the-fact parity check.
+  It uses the same profile and runtime defaults as Publish/startup, binds the
+  HTTPS target to the CI manifest, and requires real API readiness, matching
+  source/contract, served asset hashes and the complete security catalog. Supply
+  `RELEASE_MANIFEST`, its independently verified `RELEASE_MANIFEST_SHA256`,
+  `RELEASE_BASE_URL` and an authorized `DATABASE_URL`, or replace database access
+  with `--catalog-file <capture>` and its independently trusted
+  `RELEASE_SECURITY_CATALOG_SHA256`. It never changes the runtime state.
+  `--held --evidence-out` remains governed-only: pilot maintenance health does
+  not prove readiness or produce activation evidence.
 - **governed**: the R198–R200 path unchanged — HOLD by default, permit-bound
   RUN, read-only release preflight with fresh backup and restore-drill
   evidence and semantic catalog parity.

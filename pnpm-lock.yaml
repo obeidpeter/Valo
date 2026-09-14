@@ -512,6 +512,9 @@ importers:
       '@workspace/api-errors':
         specifier: workspace:*
         version: link:../../lib/api-errors
+      '@workspace/api-zod':
+        specifier: workspace:*
+        version: link:../../lib/api-zod
       '@workspace/format':
         specifier: workspace:*
         version: link:../../lib/format
@@ -1223,6 +1226,9 @@ importers:
       playwright:
         specifier: ^1.49.0
         version: 1.61.1
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
 packages:
 

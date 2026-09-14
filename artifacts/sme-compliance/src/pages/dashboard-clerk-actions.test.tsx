@@ -133,6 +133,9 @@ import {
   getGetActionPoliciesQueryKey,
   getGetActionProposalsQueryKey,
   getGetDashboardSummaryQueryKey,
+  getGetReceivablesSummaryQueryKey,
+  getGetPenaltyExposureQueryKey,
+  getGetMonthEndCloseQueryKey,
   getListInvoicesQueryKey,
 } from "@workspace/api-client-react";
 import type {
@@ -263,16 +266,16 @@ function policy(over: Partial<ClerkActionPolicy> = {}): ClerkActionPolicy {
 function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = vi.spyOn(qc, "invalidateQueries").mockResolvedValue(undefined);
-  const ui = (
+  const ui = () => (
     <QueryClientProvider client={qc}>
       <ClerkActionsCard clientPartyId="cp-1" />
     </QueryClientProvider>
   );
-  const view = render(ui);
+  const view = render(ui());
   return {
     invalidatedKeys: () =>
       spy.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey),
-    rerenderCard: () => view.rerender(ui),
+    rerenderCard: () => view.rerender(ui()),
   };
 }
 
@@ -397,8 +400,22 @@ describe("ClerkActionsCard (SME dashboard)", () => {
     // proposals/decisions refetch is deferred so the open dialog's backing
     // list cannot empty underneath it.
     const afterSuccess = invalidatedKeys();
-    expect(afterSuccess).toContainEqual(getListInvoicesQueryKey());
-    expect(afterSuccess).toContainEqual(getGetDashboardSummaryQueryKey());
+    expect(afterSuccess).toEqual([
+      getListInvoicesQueryKey(),
+      getGetDashboardSummaryQueryKey(),
+      getGetReceivablesSummaryQueryKey(),
+      getGetPenaltyExposureQueryKey(),
+      getGetMonthEndCloseQueryKey(),
+    ]);
+    expect(harness.execute.calls).toEqual([
+      {
+        data: {
+          kind: "submit_overdue",
+          clientPartyId: "cp-1",
+          invoiceIds: ["inv-1", "inv-2"],
+        },
+      },
+    ]);
     expect(afterSuccess).not.toContainEqual(getGetActionProposalsQueryKey());
     expect(afterSuccess).not.toContainEqual(getGetActionDecisionsQueryKey());
 

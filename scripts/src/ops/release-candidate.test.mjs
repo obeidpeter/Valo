@@ -363,6 +363,115 @@ test("producer binds repository, workflow, exact main run/attempt, successful jo
     assert.throws(() => selection({ ...selectionBase, ...values }));
 });
 
+function parallelProducer() {
+  const p = producer();
+  const e2e = p.jobs[1];
+  e2e.steps = [
+    { ...e2e.steps[0] },
+    {
+      ...e2e.steps[1],
+      name: "Record tested candidate identity",
+      completed_at: "2026-09-01T10:58:15Z",
+    },
+    {
+      ...e2e.steps[1],
+      name: "Preserve tested candidate",
+      number: 3,
+      started_at: "2026-09-01T10:58:30Z",
+    },
+  ];
+  p.jobs.push({
+    ...e2e,
+    id: 32,
+    name: "release-artifact",
+    started_at: "2026-09-01T11:00:00Z",
+    completed_at: "2026-09-01T11:03:00Z",
+    steps: [
+      {
+        ...e2e.steps[0],
+        name: "Verify tested immutable build manifest",
+        started_at: "2026-09-01T11:01:00Z",
+        completed_at: "2026-09-01T11:01:30Z",
+      },
+      {
+        ...e2e.steps[1],
+        name: "Preserve tested release artifact",
+        started_at: "2026-09-01T11:02:00Z",
+        completed_at: "2026-09-01T11:02:30Z",
+      },
+    ],
+  });
+  p.artifacts[0].created_at = "2026-09-01T11:02:15Z";
+  p.artifacts[0].updated_at = p.artifacts[0].created_at;
+  return p;
+}
+
+test("parallel gates qualify only through the later successful release-artifact job", () => {
+  const p = parallelProducer();
+  assert.equal(validateProducer(selectionBase, p).id, 40);
+  assert.equal(validateProducer(selectionBase, provenanceSnapshot(p)).id, 40);
+  for (const mutate of [
+    (p) => {
+      p.jobs[0].conclusion = "failure";
+    },
+    (p) => {
+      p.jobs[1].conclusion = "cancelled";
+    },
+    (p) => {
+      p.jobs[2].conclusion = "skipped";
+    },
+    (p) => {
+      p.jobs[2].status = "in_progress";
+    },
+    (p) => {
+      p.jobs[2].run_attempt = 1;
+    },
+    (p) => {
+      p.jobs[2].head_sha = "b".repeat(40);
+    },
+    (p) => {
+      p.jobs[2].started_at = "2026-09-01T10:59:59Z";
+    },
+    (p) => {
+      p.jobs[0].completed_at = "2026-09-01T11:01:00Z";
+    },
+    (p) => {
+      p.jobs[1].steps[1].conclusion = "failure";
+    },
+    (p) => {
+      p.jobs[1].steps.pop();
+    },
+    (p) => {
+      p.jobs[1].steps[1].number = 4;
+    },
+    (p) => {
+      p.jobs[2].steps[0].conclusion = "skipped";
+    },
+    (p) => {
+      p.jobs[2].steps[1].number = 1;
+    },
+    (p) => {
+      p.artifacts[0].created_at = "2026-09-01T10:59:00Z";
+    },
+    (p) => {
+      p.artifacts[0].name = `meridian-tested-${selectionBase.revision}-123-2`;
+    },
+    (p) => {
+      p.jobs.pop();
+    },
+    (p) => {
+      p.jobs.push({ ...p.jobs[2], id: 33 });
+    },
+    (p) => {
+      p.jobs[2].name = "unexpected-producer";
+    },
+  ]) {
+    const changed = parallelProducer();
+    mutate(changed);
+    assert.throws(() => validateProducer(selectionBase, changed));
+  }
+});
+
 test("API pagination is complete and duplicate/changed counts fail closed", async () => {
   const calls = [];
   const client = githubClient("synthetic", async (url, options) => {

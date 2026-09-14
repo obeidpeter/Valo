@@ -1,5 +1,14 @@
 export { triggerDownload } from "./trigger-download";
 export {
+  ClerkActionsPanel,
+  type ClerkActionRow,
+  type ClerkPolicyRow,
+} from "./clerk-action-sections";
+export {
+  ClerkActionDialog,
+  ClerkAutomationDialog,
+} from "./clerk-action-dialogs";
+export {
   SessionActivityCenter,
   SessionOperationRecovery,
   operationSessionKey,

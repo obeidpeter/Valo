@@ -4,8 +4,9 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { parseArgs } from "node:util";
 import ts from "typescript";
+import { bundleDirectory, measureBundle } from "./bundle-inventory.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../../../..");
@@ -15,6 +16,12 @@ const vite = path.join(
   "bin/vite.js",
 );
 const out = path.join(root, "tmp/route-budget-r198");
+const { values: options } = parseArgs({
+  options: {
+    "use-built": { type: "boolean", default: false },
+    "measure-only": { type: "boolean", default: false },
+  },
+});
 const apps = [
   "console",
   "sme-compliance",
@@ -79,73 +86,45 @@ for (const app of apps) {
   report.architecture.push(
     `${app}: no eager page imports in route entries, raw operation keys, or production catalogue references`,
   );
-  const destination = path.join(out, app);
-  const result = spawnSync(
-    process.execPath,
-    [
-      vite,
-      "build",
-      "--configLoader",
-      "runner",
-      "--manifest",
-      "--outDir",
-      destination,
-    ],
-    {
-      cwd: directory,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, NODE_ENV: "production" },
-    },
-  );
-  await writeFile(
-    path.join(out, `${app}.build.log`),
-    result.stdout + result.stderr,
-  );
-  assert.equal(
-    result.status,
-    0,
-    `${app} build failed; see ${out}/${app}.build.log`,
-  );
-  const manifest = JSON.parse(
-    await readFile(path.join(destination, ".vite/manifest.json"), "utf8"),
-  );
-  const closure = new Set();
-  function visit(key) {
-    if (closure.has(key)) return;
-    closure.add(key);
-    for (const imported of manifest[key].imports ?? []) visit(imported);
+  const destination = bundleDirectory(root, app, options["use-built"]);
+  if (!options["use-built"]) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        vite,
+        "build",
+        "--configLoader",
+        "runner",
+        "--manifest",
+        "--outDir",
+        destination,
+      ],
+      {
+        cwd: directory,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, NODE_ENV: "production" },
+      },
+    );
+    await writeFile(
+      path.join(out, `${app}.build.log`),
+      result.stdout + result.stderr,
+    );
+    assert.equal(
+      result.status,
+      0,
+      `${app} build failed; see ${out}/${app}.build.log`,
+    );
   }
-  Object.entries(manifest)
-    .filter(([, chunk]) => chunk.isEntry)
-    .forEach(([key]) => visit(key));
-  const chunks = await Promise.all(
-    [...closure].map(async (key) => {
-      const bytes = await readFile(path.join(destination, manifest[key].file));
-      return {
-        source: key,
-        file: manifest[key].file,
-        bytes: bytes.length,
-        gzipBytes: gzipSync(bytes).length,
-      };
-    }),
-  );
-  const dynamicEntries = Object.entries(manifest)
-    .filter(([, chunk]) => chunk.isDynamicEntry)
-    .map(([key, chunk]) => ({ source: key, file: chunk.file }));
-  report.apps[app] = {
-    eagerBytes: chunks.reduce((sum, chunk) => sum + chunk.bytes, 0),
-    eagerGzipBytes: chunks.reduce((sum, chunk) => sum + chunk.gzipBytes, 0),
-    dynamicEntries: dynamicEntries.length,
-    chunks,
-    lazy: dynamicEntries,
-  };
+  // CI measures the same immutable bundles used by journeys and publication.
+  // Missing manifests in --use-built mode fail; they never trigger a rebuild.
+  report.apps[app] = await measureBundle(destination);
   console.log(
-    `${app}: ${report.apps[app].eagerGzipBytes} eager gzip bytes; ${dynamicEntries.length} lazy entries`,
+    `${app}: ${report.apps[app].eagerGzipBytes} eager gzip bytes; ${report.apps[app].dynamicEntries} lazy entries`,
   );
 }
 await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2));
-if (!process.argv.includes("--measure-only")) {
+if (!options["measure-only"]) {
   const budgets = JSON.parse(
     await readFile(path.join(here, "route-budgets.json"), "utf8"),
   );

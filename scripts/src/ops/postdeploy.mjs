@@ -23,6 +23,7 @@ import {
   deploymentOrigin,
   maintenanceIdentity,
   maintenanceResponse,
+  releaseProfile,
   runtimeState,
 } from "./maintenance-server.mjs";
 
@@ -422,6 +423,7 @@ export async function postdeploy(
     env.RELEASE_MANIFEST,
     env.RELEASE_MANIFEST_SHA256,
   );
+  const profile = releaseProfile(env);
   assert.ok(
     (env.DATABASE_URL || catalogFile) && env.RELEASE_BASE_URL,
     "DATABASE_URL or --catalog-file, and RELEASE_BASE_URL required",
@@ -429,6 +431,11 @@ export async function postdeploy(
   let identity;
   let plan;
   if (held) {
+    assert.equal(
+      profile,
+      "governed",
+      "held evidence is governed-only; pilot HOLD does not authorize activation",
+    );
     assert.equal(runtimeState(env), "HOLD", "held verification requires HOLD");
     identity = maintenanceIdentity(manifest, env);
     plan = loadMaintenancePlan(env, {
@@ -449,11 +456,23 @@ export async function postdeploy(
     assert.equal(
       runtimeState(env),
       "RUN",
-      "real API verification requires explicit RUN after activation",
+      "real API verification requires RUN; HOLD is not API readiness",
     );
-    loadActivationPermit(env, activationBindings(manifest, env), {
-      phase: "runtime",
-    });
+    if (profile === "governed") {
+      loadActivationPermit(env, activationBindings(manifest, env), {
+        phase: "runtime",
+      });
+    } else {
+      assert.ok(
+        manifest.mobile?.domain,
+        "CI mobile production target is required",
+      );
+      assert.equal(
+        deploymentOrigin(env.RELEASE_BASE_URL),
+        deploymentOrigin(`https://${manifest.mobile.domain}`),
+        "release origin differs from the CI mobile production target",
+      );
+    }
   }
   let catalogSource;
   if (catalogFile) {
@@ -481,7 +500,7 @@ export async function postdeploy(
       dependencies.fetcher,
     );
     console.log(
-      "postdeploy: real API readiness, source, contract, assets, schema and security match " +
+      `postdeploy (${profile}): real API readiness, source, contract, assets, schema and security match ` +
         manifest.source.revision +
         "; this does not reopen external ingress or schedules",
     );
