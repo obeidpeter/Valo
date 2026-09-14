@@ -46,7 +46,7 @@ export function useBusinessDetailsSaveScope(
     Boolean(permissionError),
     party?.mergedIntoId,
   ]);
-  const token = useMemo(() => ({}), [scope]);
+  const token = useMemo(() => ({ scope }), [scope]);
   const active = useRef<object | null>(token);
   useLayoutEffect(() => {
     active.current = token;

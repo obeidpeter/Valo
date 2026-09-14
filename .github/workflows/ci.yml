@@ -152,7 +152,7 @@ jobs:
         run: pnpm run typecheck
 
       # Drift tsc tolerates: unused imports/vars, hook-dependency mistakes.
-      # Warnings surface in the log but only errors fail the gate.
+      # Hook rules cover shared UI, every web app and mobile, and fail the gate.
       - name: Lint
         run: pnpm run lint
 

@@ -12,6 +12,8 @@ export const SOURCE_EXTENSIONS = new Set([
   ".tsx",
   ".mts",
   ".mjs",
+  ".cts",
+  ".cjs",
   ".js",
   ".jsx",
 ]);

@@ -637,7 +637,7 @@ test("load errors focus a retry alert and recover; stale cross-scope reads are i
   vi.mocked(api.list).mockRejectedValueOnce({ status: 503 });
   view.rerender(<EvidenceHub api={api} me={evidenceFixtureMe} />);
   const alert = await screen.findByRole("alert");
-  expect(document.activeElement).toBe(alert);
+  await waitFor(() => expect(document.activeElement).toBe(alert));
   fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
   await screen.findByRole("button", { name: /Delivery note for September/ });
 });

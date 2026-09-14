@@ -1,6 +1,6 @@
 // In-flight worker passes and sweeps, so a graceful shutdown (lib/shutdown.ts)
 // can wait for the work that is running rather than cut it off
-// mid-transaction. Shared by the worker loops (pipeline.ts) and the sweep
+// mid-transaction. Shared by the worker loops (scheduler.ts) and the sweep
 // runner (sweeps.ts); R107 moved it out of pipeline.ts.
 const inFlight = new Set<Promise<unknown>>();
 export function track<T>(pass: Promise<T>): Promise<T> {

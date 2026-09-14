@@ -218,7 +218,7 @@ export default function App() {
         daysAccessNotGranted: daysParsed.value,
         nonCompliantInvoiceCount: invoicesParsed.value,
       }),
-    [turnover, days, invoices],
+    [turnoverParsed.value, daysParsed.value, invoicesParsed.value],
   );
 
   /** Turnover blank/invalid is distinct from ₦0 — never assert a band without it. */

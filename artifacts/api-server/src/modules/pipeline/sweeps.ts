@@ -12,7 +12,7 @@ import { track } from "./in-flight";
 import { classifyPostgresFailure } from "./db-retry";
 
 // The compliance sweep registry and pass runner (R107: extracted from
-// pipeline.ts, which keeps the outbox drain, the reconciliation loops and the
+// pipeline.ts, now a facade over scheduler.ts for the drain, reconciliation and
 // guarded passes that hold the distributed locks). Transaction-neutral: it
 // never opens a database context of its own except to scope the
 // abandoned-pass alert.
@@ -217,7 +217,7 @@ function withSweepTimeout<T>(
   });
 }
 
-// Set by stopWorker (pipeline.ts): a stopping pass fails its remaining sweeps
+// Set by stopWorker (scheduler.ts): a stopping pass fails its remaining sweeps
 // instead of starting them, and every sweep in flight is asked to stop
 // through its abort signal.
 let stopping = false;
@@ -331,7 +331,7 @@ export function orderedSweeps<T extends { critical?: boolean }>(
 }
 
 /** One pass over the registry — critical sweeps first — recording the
- *  pass-health gauges. Called by the guarded pass in pipeline.ts. */
+ *  pass-health gauges. Called by the guarded pass in scheduler.ts. */
 export async function runRegisteredSweeps(
   owned: Promise<unknown>[],
   report: SweepFailureReport,
