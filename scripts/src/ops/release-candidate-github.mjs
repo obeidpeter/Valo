@@ -13,11 +13,19 @@ const ARTIFACT_STORAGE_HOST_SUFFIXES = Object.freeze([
 ]);
 
 const WORKFLOW = ".github/workflows/ci.yml";
-// The two producer-job steps whose order and timing bind the artifact to the
-// selected attempt.
+const STAMP_STEP = "Stamp tested immutable build manifest";
+const VERIFY_STEP = "Verify tested immutable build manifest";
+const UPLOAD_STEP = "Preserve tested release artifact";
+const CANDIDATE_STEPS = [
+  STAMP_STEP,
+  "Record tested candidate identity",
+  "Preserve tested candidate",
+];
+// Retain both the legacy producer and the split-job qualification evidence.
 const PRODUCER_STEPS = Object.freeze([
-  "Stamp tested immutable build manifest",
-  "Preserve tested release artifact",
+  ...CANDIDATE_STEPS,
+  VERIFY_STEP,
+  UPLOAD_STEP,
 ]);
 export const ENVIRONMENT = "release-production-handoff";
 export const mainWorkflowPath = (actual, expected) =>
@@ -96,7 +104,12 @@ export function validateProducer(input, evidence) {
     jobs.length,
     "duplicate jobs",
   );
-  for (const name of ["quality-gate", "e2e"]) {
+  const splitProducer = jobs.some((job) => job.name === "release-artifact");
+  for (const name of [
+    "quality-gate",
+    "e2e",
+    ...(splitProducer ? ["release-artifact"] : []),
+  ]) {
     const matches = jobs.filter((job) => job.name === name);
     assert.equal(
       matches.length,
@@ -121,14 +134,25 @@ export function validateProducer(input, evidence) {
     assert.equal(job.status, "completed");
     assert.equal(job.conclusion, "success");
   }
-  const producer = jobs.find((job) => job.name === "e2e");
-  const producerSteps = [];
-  for (const name of PRODUCER_STEPS) {
-    const steps = producer.steps.filter((step) => step.name === name);
-    assert.equal(steps.length, 1, `missing/duplicate producer step: ${name}`);
-    assert.equal(steps[0].status, "completed");
-    assert.equal(steps[0].conclusion, "success");
-    producerSteps.push(steps[0]);
+  const producer = jobs.find(
+    (job) => job.name === (splitProducer ? "release-artifact" : "e2e"),
+  );
+  const producerSteps = verifiedSteps(producer, [
+    splitProducer ? VERIFY_STEP : STAMP_STEP,
+    UPLOAD_STEP,
+  ]);
+  if (splitProducer) {
+    verifiedSteps(
+      jobs.find((job) => job.name === "e2e"),
+      CANDIDATE_STEPS,
+    );
+    for (const name of ["quality-gate", "e2e"]) {
+      const gate = jobs.find((job) => job.name === name);
+      assert.ok(
+        Date.parse(producer.started_at) >= Date.parse(gate.completed_at),
+        "release qualification must follow both successful gates",
+      );
+    }
   }
   assert.equal(
     new Set(artifacts.map((item) => item.id)).size,
@@ -168,28 +192,7 @@ export function validateProducer(input, evidence) {
     },
     "foreign artifact provenance",
   );
-  const [stamp, upload] = producerSteps;
-  assert.ok(
-    positiveId(stamp.number) &&
-      positiveId(upload.number) &&
-      stamp.number < upload.number,
-    "stamp must precede upload",
-  );
-  const timeline = [
-    producer.started_at,
-    stamp.started_at,
-    stamp.completed_at,
-    upload.started_at,
-    upload.completed_at,
-    producer.completed_at,
-  ].map(Date.parse);
-  assert.ok(
-    timeline.every(
-      (value, index) =>
-        Number.isFinite(value) && (index === 0 || value >= timeline[index - 1]),
-    ),
-    "invalid producer step interval",
-  );
+  const [, upload] = producerSteps;
   const start = Date.parse(upload.started_at);
   const end = Date.parse(upload.completed_at);
   assert.ok(
@@ -203,6 +206,37 @@ export function validateProducer(input, evidence) {
     );
   }
   return artifact;
+}
+
+function verifiedSteps(job, names) {
+  const selected = names.map((name) => {
+    const matches = (job.steps ?? []).filter((step) => step.name === name);
+    assert.equal(matches.length, 1, `missing/duplicate producer step: ${name}`);
+    assert.equal(matches[0].status, "completed");
+    assert.equal(matches[0].conclusion, "success");
+    return matches[0];
+  });
+  assert.ok(
+    selected.every(
+      (step, index) =>
+        positiveId(step.number) &&
+        (index === 0 || step.number > selected[index - 1].number),
+    ),
+    "producer steps must be ordered",
+  );
+  const timeline = [
+    job.started_at,
+    ...selected.flatMap((step) => [step.started_at, step.completed_at]),
+    job.completed_at,
+  ].map(Date.parse);
+  assert.ok(
+    timeline.every(
+      (value, index) =>
+        Number.isFinite(value) && (index === 0 || value >= timeline[index - 1]),
+    ),
+    "invalid producer step interval",
+  );
+  return selected;
 }
 
 const pick = (source, keys) =>

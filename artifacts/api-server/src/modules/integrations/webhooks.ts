@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { and, desc, eq, sql } from "drizzle-orm";
+import { WEBHOOK_EVENTS } from "@workspace/api-zod/integrations";
 import {
   getDb,
   runInBypassContext,
@@ -37,11 +38,7 @@ import { webhookFanoutOldestAge } from "../../lib/metrics";
 // Both sources are append-only and commit WITH the domain write, which makes
 // this a post-commit fan-out by construction: a rolled-back stamp can never
 // produce a delivery.
-export const WEBHOOK_EVENTS = [
-  "invoice.stamped",
-  "invoice.settled",
-  "statement.reconciled",
-] as const;
+export { WEBHOOK_EVENTS };
 
 const WEBHOOK_EVENT_SET: ReadonlySet<string> = new Set(WEBHOOK_EVENTS);
 

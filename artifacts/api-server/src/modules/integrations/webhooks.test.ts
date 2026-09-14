@@ -4,6 +4,7 @@ import { createServer, type Server, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { randomUUID, createHmac, createHash } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
+import { WEBHOOK_EVENTS as contractEvents } from "@workspace/api-zod/integrations";
 import {
   getDb,
   runRequestContext,
@@ -47,6 +48,13 @@ import { firmPrincipal } from "../../test-helpers/principals.ts";
 // deleted; only the integration tables themselves are cleaned.
 
 const SALT = makeRunSalt();
+
+test("webhook validation uses the browser-safe contract and rejects unsupported events", () => {
+  assert.equal(WEBHOOK_EVENTS, contractEvents);
+  assert.equal(Object.isFrozen(WEBHOOK_EVENTS), true);
+  assert.deepEqual(vetEvents([...contractEvents]), [...contractEvents]);
+  assert.throws(() => vetEvents(["invoice.submit"]), { code: "INVALID_EVENT" });
+});
 
 test("fanout batch size rejects unbounded or malformed work", async () => {
   for (const size of [0, -1, 1.5, Infinity, NaN, 1_001]) {

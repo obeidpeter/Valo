@@ -23,6 +23,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { operationSessionKey, readOperations } from "@workspace/web-ui";
 import type {
   ActionProposal,
   ActionProposals,
@@ -57,6 +58,7 @@ const harness = vi.hoisted(() => ({
     calls: [] as unknown[],
     pending: false,
     result: null as unknown,
+    error: null as unknown,
   },
   policyCalls: {
     grant: [] as unknown[],
@@ -74,6 +76,7 @@ const harness = vi.hoisted(() => ({
     this.execute.calls = [];
     this.execute.pending = false;
     this.execute.result = null;
+    this.execute.error = null;
     this.policyCalls.grant = [];
     this.policyCalls.pause = [];
     this.policyCalls.resume = [];
@@ -127,6 +130,7 @@ vi.mock("@workspace/api-client-react", async (importOriginal) => {
       },
       mutateAsync: (vars: unknown) => {
         harness.execute.calls.push(vars);
+        if (harness.execute.error) return Promise.reject(harness.execute.error);
         return Promise.resolve(harness.execute.result);
       },
     }),
@@ -270,16 +274,16 @@ function chaserDraft(): PaymentChaserDraft {
 function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const spy = vi.spyOn(qc, "invalidateQueries").mockResolvedValue(undefined);
-  const ui = (
+  const ui = () => (
     <QueryClientProvider client={qc}>
       <ClerkActionsCard clientPartyId="cp-1" />
     </QueryClientProvider>
   );
-  const view = render(ui);
+  const view = render(ui());
   return {
     invalidatedKeys: () =>
       spy.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey),
-    rerenderCard: () => view.rerender(ui),
+    rerenderCard: () => view.rerender(ui()),
   };
 }
 
@@ -302,8 +306,12 @@ async function openResults(
   expect(screen.getByText("Batch result")).toBeTruthy();
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
 beforeEach(() => {
+  window.localStorage.clear();
   harness.reset();
   // The default viewer holds invoice.submit — the capability the server
   // gates every write on this card behind (routes/clerk/actions.ts).
@@ -321,6 +329,86 @@ beforeEach(() => {
 });
 
 describe("ClerkActionsCard (console)", () => {
+  test("records the app-specific recovery route and durable success", async () => {
+    const { invalidatedKeys } = renderCard();
+    await openResults({ decision: decision([]), drafts: null });
+    expect(harness.execute.calls).toEqual([
+      {
+        data: {
+          kind: "submit_overdue",
+          clientPartyId: "cp-1",
+          invoiceIds: ["inv-1", "inv-2"],
+        },
+      },
+    ]);
+    const records = readOperations(operationSessionKey({ userId: "u-1" })!);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      status: "succeeded",
+      kind: "clerk",
+      route: "/clients/cp-1?view=clerk",
+      savedSummary:
+        "A durable Clerk decision is available on the client record.",
+    });
+    expect(invalidatedKeys()).toEqual([getGetClientPortfolioQueryKey("cp-1")]);
+  });
+
+  test.each([
+    {
+      error: new TypeError("Failed to fetch"),
+      status: "partial",
+      summary:
+        "Outcome unconfirmed. Reopen the client Clerk tab before retrying.",
+    },
+    {
+      error: { status: 403, message: "Forbidden" },
+      status: "failed",
+      summary: "No completed decision was returned.",
+    },
+  ])(
+    "preserves $status recovery when execution rejects",
+    async ({ error, status, summary }) => {
+      harness.execute.error = error;
+      const { invalidatedKeys } = renderCard();
+      await click(screen.getByTestId("button-approve-submit_overdue"));
+      await click(screen.getByTestId("button-confirm-action"));
+      const records = readOperations(operationSessionKey({ userId: "u-1" })!);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        status,
+        savedSummary: summary,
+        route: "/clients/cp-1?view=clerk",
+      });
+      expect(screen.queryByText("Batch result")).toBeNull();
+      expect(screen.getByTestId("button-confirm-action")).toBeTruthy();
+      expect(invalidatedKeys()).toEqual([]);
+    },
+  );
+
+  test.each(["action", "automation"])(
+    "revoking capabilities disables an already-open %s confirmation",
+    async (mode) => {
+      harness.policies.data = { policies: [], enabled: true };
+      const { rerenderCard } = renderCard();
+      await click(
+        screen.getByTestId(
+          mode === "action"
+            ? "button-approve-submit_overdue"
+            : "button-automate-submit_overdue",
+        ),
+      );
+      harness.me.data = { userId: "u-1", role: "auditor", capabilities: [] };
+      rerenderCard();
+      const confirm = screen.getByTestId(
+        mode === "action" ? "button-confirm-action" : "button-confirm-automate",
+      ) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      await click(confirm);
+      expect(harness.execute.calls).toEqual([]);
+      expect(harness.policyCalls.grant).toEqual([]);
+    },
+  );
+
   test("F1: the open results dialog survives the proposals list refetching to empty", async () => {
     const { rerenderCard } = renderCard();
     await openResults({

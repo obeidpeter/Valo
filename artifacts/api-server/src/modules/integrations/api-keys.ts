@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { MACHINE_CAPABILITIES as machineCapabilities } from "@workspace/api-zod/integrations";
 import {
   getDb,
   getSystemDb,
@@ -32,11 +33,8 @@ import { DomainError } from "../errors";
 //   firm_admin role) or change what the firm pays.
 // - NOT invoice.submit — filing to the government rails stays a human
 //   decision; a machine can stage drafts, a person submits them.
-export const MACHINE_CAPABILITIES = [
-  "invoice.read",
-  "invoice.write",
-  "statement.write",
-] as const satisfies readonly Capability[];
+export const MACHINE_CAPABILITIES =
+  machineCapabilities satisfies readonly Capability[];
 
 const MACHINE_CAPABILITY_SET: ReadonlySet<string> = new Set(
   MACHINE_CAPABILITIES,

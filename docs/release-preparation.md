@@ -21,8 +21,37 @@ database connection, or authorizes production changes.
 - `release.mjs` and the governed recovery/activation tools retain their existing
   requirements. A pilot preparation receipt cannot replace a governed RUN permit.
 
-The new tooling fills the transport/provenance, isolated-checkout, and human
-handoff gaps. It does not edit those gates, `.replit`, `ci.yml`, or schema tools.
+The preparation tooling fills the transport/provenance, isolated-checkout, and
+human handoff gaps. It does not edit those gates, `.replit`, or schema tools.
+
+## Parallel CI And Artifact Reuse
+
+`quality-gate` and `e2e` run independently on separate runners and disposable
+databases. E2E builds the seven production packages once, runs the existing
+browser/journey checks, and stamps the immutable manifest. Bundle budgets read
+those same frontend outputs instead of rebuilding them. CI moves the five Vite
+bundle manifests to `tmp/route-budget-r198` before stamping: they are diagnostic
+metadata, not public website files. No runtime bundle is rewritten.
+
+E2E records independently supplied manifest and full candidate-tree checksums
+in job outputs, then uploads a non-release candidate named
+`meridian-tested-<sha>-<run>-<attempt>`. The transfer checksum includes hidden
+files, maps and auxiliary package files. This candidate is not deployable release
+evidence, even if E2E passes while the quality job fails.
+
+The final `release-artifact` job requires both successful gates. It downloads the
+exact candidate ID outside the source checkout, verifies every transferred byte,
+source/tree/schema identity, CI run/attempt and mobile target, then uploads the
+unchanged files as `meridian-release-<sha>`. It installs nothing, does not rebuild
+or restamp, opens no database, and executes no downloaded application code.
+Missing outputs, altered packages, skipped gates or stale attempts fail closed.
+
+The consumer verifies all three jobs and their ordered producer steps. Existing
+two-job release evidence remains supported under its original checks; removing
+the qualifier from new evidence cannot downgrade it because E2E no longer has
+the final release-upload step. Always rerun **all jobs** after a failed attempt.
+Elapsed-time savings must be measured on hosted CI after this workflow lands;
+local tests verify the graph and provenance constraints, not runner scheduling.
 
 ## Trust And Selection
 
@@ -35,7 +64,9 @@ read-only REST responses must establish:
    A fork, PR event, different workflow, unfinished run, or failed run refuses.
 2. Both the run and attempt endpoints still identify the requested attempt.
    `quality-gate` and `e2e` must each occur exactly once and succeed in that
-   attempt; the manifest-stamp and artifact-upload steps must succeed too.
+   attempt; the manifest-stamp and artifact-upload steps must succeed too. For
+   the parallel workflow, `release-artifact` must also succeed after both gates,
+   including its immutable verification and final artifact-upload steps.
 3. Complete paginated artifact enumeration finds exactly one
    `meridian-release-<sha>`. Its numeric ID, repository/head-repository IDs,
    branch, SHA, non-expiration, producer-job timestamps, byte count, and

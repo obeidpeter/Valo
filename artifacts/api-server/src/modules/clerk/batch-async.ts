@@ -208,6 +208,23 @@ export type SliceOutcome =
   | "parked" // kill switch / budget: back in the queue, content intact
   | "more"; // slice finished, segments remain — call again to continue
 
+async function hasBatchBudget(firmId: string): Promise<boolean> {
+  try {
+    await assertFirmClerkBudget(firmId);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof DomainError &&
+      error.code === "CLERK_BUDGET_EXHAUSTED"
+    ) {
+      return false;
+    }
+    // Infrastructure failures leave the claim and persisted cursor intact.
+    // The kick/sweep reports the error; stale-claim recovery retries the batch.
+    throw error;
+  }
+}
+
 // Process one SLICE of a batch. Safe to call concurrently and repeatedly:
 // the claim + fence decide, the cursor resumes.
 export async function processBatch(
@@ -282,12 +299,8 @@ export async function processBatch(
     // Budget pre-check BEFORE the segmentation call: an exhausted allowance
     // parks the batch (it self-heals next month; the retention sweep is the
     // backstop) instead of burning the document with a misleading failure.
-    if (batch.firmId) {
-      try {
-        await assertFirmClerkBudget(batch.firmId);
-      } catch {
-        return park();
-      }
+    if (batch.firmId && !(await hasBatchBudget(batch.firmId))) {
+      return park();
     }
     try {
       if (isScan) {
@@ -363,21 +376,17 @@ export async function processBatch(
   while (cursor < totalCount && inSlice < SEGMENTS_PER_SLICE) {
     // Same budget semantics as the sync batch: a firm that runs dry mid-batch
     // keeps what was already created; the counters make the shortfall visible.
-    if (batch.firmId) {
-      try {
-        await assertFirmClerkBudget(batch.firmId);
-      } catch {
-        return fail(
-          created > 0
-            ? `The firm's Clerk allowance ran out after ${created} invoice(s).`
-            : "The firm's monthly Clerk allowance is exhausted.",
-          {
-            processedSegments: cursor,
-            createdCases: created,
-            skippedDuplicates: skipped,
-          },
-        );
-      }
+    if (batch.firmId && !(await hasBatchBudget(batch.firmId))) {
+      return fail(
+        created > 0
+          ? `The firm's Clerk allowance ran out after ${created} invoice(s).`
+          : "The firm's monthly Clerk allowance is exhausted.",
+        {
+          processedSegments: cursor,
+          createdCases: created,
+          skippedDuplicates: skipped,
+        },
+      );
     }
     try {
       await createExtractionCase(
@@ -531,12 +540,8 @@ export async function sweepClerkBatches(): Promise<void> {
     // updated_at), so a permanently-exhausted firm's batch cycling through the
     // sweep would keep itself forever inside the retention window. Skip it
     // without a write and let another entitled firm make progress.
-    if (row.firmId) {
-      try {
-        await assertFirmClerkBudget(row.firmId);
-      } catch {
-        continue;
-      }
+    if (row.firmId && !(await hasBatchBudget(row.firmId))) {
+      continue;
     }
     candidate = row;
     break;

@@ -2,6 +2,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { MACHINE_CAPABILITIES as contractCapabilities } from "@workspace/api-zod/integrations";
 import {
   getDb,
   runRequestContext,
@@ -235,6 +236,12 @@ test("capability narrowing: the key's list is the whole grant", async () => {
 });
 
 test("machine allowlist stays data-plane only", () => {
+  assert.equal(
+    MACHINE_CAPABILITIES,
+    contractCapabilities,
+    "validation uses the browser-safe contract, not a copy",
+  );
+  assert.equal(Object.isFrozen(MACHINE_CAPABILITIES), true);
   assert.deepEqual(
     [...MACHINE_CAPABILITIES],
     ["invoice.read", "invoice.write", "statement.write"],

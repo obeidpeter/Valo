@@ -43,6 +43,7 @@
     "@vitest/coverage-v8": "4.1.10",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/api-errors": "workspace:*",
+    "@workspace/api-zod": "workspace:*",
     "@workspace/format": "workspace:*",
     "@workspace/web-config": "workspace:*",
     "@workspace/web-ui": "workspace:*",

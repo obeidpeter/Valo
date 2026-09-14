@@ -1,8 +1,14 @@
 import { test, expect, describe, vi } from "vitest";
 import {
+  MACHINE_CAPABILITIES,
+  WEBHOOK_EVENTS,
+} from "@workspace/api-zod/integrations";
+import {
   MACHINE_CAPABILITY_OPTIONS,
   WEBHOOK_EVENT_OPTIONS,
   SIGNATURE_NOTE,
+} from "./api-access/options";
+import {
   toggleListValue,
   apiKeyStatusLabel,
   apiKeyBadgeClasses,
@@ -15,20 +21,16 @@ import {
   canRetryDelivery,
   retryDeliveryErrorNote,
   fireDeliveryRetry,
-} from "./api-access";
+} from "./api-access/helpers";
 
-// Helpers for the firm-admin API & webhooks page. The two option catalogues
-// are MIRRORS of the server's allowlists (api-keys.ts MACHINE_CAPABILITIES,
-// webhooks.ts WEBHOOK_EVENTS) — the pins below fail if either side drifts,
-// so the dialogs can never offer something the server would reject.
+// Compare the UI's actual options with the contract used by server validation,
+// not another independently maintained list of literal values.
 
 describe("MACHINE_CAPABILITY_OPTIONS", () => {
   test("offers exactly the server's machine-safe allowlist, in order", () => {
-    expect(MACHINE_CAPABILITY_OPTIONS.map((o) => o.value)).toEqual([
-      "invoice.read",
-      "invoice.write",
-      "statement.write",
-    ]);
+    expect(MACHINE_CAPABILITY_OPTIONS.map((o) => o.value)).toEqual(
+      MACHINE_CAPABILITIES,
+    );
   });
 
   test("every option explains itself", () => {
@@ -41,11 +43,14 @@ describe("MACHINE_CAPABILITY_OPTIONS", () => {
 
 describe("WEBHOOK_EVENT_OPTIONS", () => {
   test("offers exactly the server's event catalogue, in order", () => {
-    expect(WEBHOOK_EVENT_OPTIONS.map((o) => o.value)).toEqual([
-      "invoice.stamped",
-      "invoice.settled",
-      "statement.reconciled",
-    ]);
+    expect(WEBHOOK_EVENT_OPTIONS.map((o) => o.value)).toEqual(WEBHOOK_EVENTS);
+  });
+
+  test("every event has complete display copy", () => {
+    for (const option of WEBHOOK_EVENT_OPTIONS) {
+      expect(option.label.length).toBeGreaterThan(0);
+      expect(option.description.length).toBeGreaterThan(0);
+    }
   });
 });
 

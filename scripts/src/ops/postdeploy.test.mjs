@@ -164,6 +164,7 @@ function fixture(t) {
     },
   };
   const env = {
+    RELEASE_PROFILE: "governed",
     RELEASE_MANIFEST: path.join(root, "manifest.json"),
     RELEASE_MANIFEST_SHA256: digest(JSON.stringify(manifest)),
     RELEASE_RUNTIME_STATE: "HOLD",
@@ -503,9 +504,244 @@ test("held catalog, CI, recovery-plan and target failures cannot emit evidence",
   assert.equal(existsSync(f.output), false);
 });
 
-test("ordinary postdeploy is real API readiness only after explicit RUN and keeps ingress held", async (t) => {
+function pilotFixture(t) {
   const f = fixture(t);
-  await assert.rejects(postdeploy([], f.env, f.deps), /explicit RUN/);
+  const env = {
+    RELEASE_PROFILE: "pilot",
+    RELEASE_RUNTIME_STATE: "RUN",
+    RELEASE_MANIFEST: f.env.RELEASE_MANIFEST,
+    RELEASE_MANIFEST_SHA256: f.env.RELEASE_MANIFEST_SHA256,
+    RELEASE_BASE_URL: f.env.RELEASE_BASE_URL,
+    DATABASE_URL: f.env.DATABASE_URL,
+  };
+  const fetcher = async (url, options) => {
+    assert.equal(url.origin, env.RELEASE_BASE_URL);
+    assert.equal(options.redirect, "error");
+    assert.equal(options.cache, "no-store");
+    if (url.pathname === "/api/healthz") {
+      return Response.json({
+        status: "ok",
+        buildRevision: revision,
+        contractVersion: f.manifest.contractVersion,
+      });
+    }
+    if (url.pathname === "/api/readyz")
+      return Response.json({ status: "ready" });
+    assert.equal(url.pathname, "/index.html");
+    return new Response("immutable page");
+  };
+  return { ...f, env, deps: { ...f.deps, fetcher } };
+}
+
+test("pilot RUN verifies the real API, complete catalog and every asset without governed evidence", async (t) => {
+  const f = pilotFixture(t);
+  for (const changes of [
+    {},
+    { RELEASE_PROFILE: undefined, RELEASE_RUNTIME_STATE: undefined },
+  ]) {
+    let catalogReads = 0;
+    const routes = [];
+    await postdeploy(
+      [],
+      { ...f.env, ...changes },
+      {
+        catalog: (url) => {
+          catalogReads++;
+          assert.equal(url, f.env.DATABASE_URL);
+          return structuredClone(catalog);
+        },
+        fetcher: (url, options) => {
+          routes.push(url.pathname);
+          return f.deps.fetcher(url, options);
+        },
+      },
+    );
+    assert.equal(catalogReads, 1);
+    assert.deepEqual(routes, ["/api/healthz", "/api/readyz", "/index.html"]);
+    assert.equal(
+      existsSync(f.output),
+      false,
+      "pilot readiness cannot mint governed held evidence",
+    );
+  }
+});
+
+test("pilot refuses invalid profiles, state, target and manifest before external IO", async (t) => {
+  const f = pilotFixture(t);
+  for (const [changes, pattern] of [
+    [{ RELEASE_PROFILE: "unknown" }, /RELEASE_PROFILE/],
+    [{ RELEASE_PROFILE: "" }, /RELEASE_PROFILE/],
+    [{ RELEASE_RUNTIME_STATE: "HOLD" }, /requires RUN/],
+    [{ RELEASE_RUNTIME_STATE: "run" }, /RELEASE_RUNTIME_STATE/],
+    [
+      { RELEASE_BASE_URL: "https://wrong.invalid" },
+      /CI mobile production target/,
+    ],
+    [{ RELEASE_BASE_URL: "http://fixture.invalid" }, /HTTPS/],
+    [{ RELEASE_BASE_URL: "https://fixture.invalid/path" }, /not a path/],
+    [{ RELEASE_BASE_URL: "https://fixture.invalid?token=synthetic" }, /query/],
+    [{ RELEASE_MANIFEST_SHA256: "0".repeat(64) }, /checksum mismatch/],
+    [{ RELEASE_MANIFEST_SHA256: undefined }, /SHA-256/],
+    [{ DATABASE_URL: undefined }, /DATABASE_URL/],
+    [{ RELEASE_PROFILE: "governed" }, /activation permit/],
+  ]) {
+    await assert.rejects(
+      postdeploy(
+        [],
+        { ...f.env, ...changes },
+        {
+          catalog: () =>
+            assert.fail("invalid admission must not read the database"),
+          fetcher: () =>
+            assert.fail("invalid admission must not contact the target"),
+        },
+      ),
+      pattern,
+    );
+  }
+  await assert.rejects(
+    postdeploy(
+      ["--held", "--evidence-out", f.output],
+      {
+        ...f.env,
+        RELEASE_RUNTIME_STATE: "HOLD",
+      },
+      f.deps,
+    ),
+    /held evidence is governed-only/,
+  );
+  assert.equal(existsSync(f.output), false);
+});
+
+test("pilot parity fails closed on catalog, source, contract, readiness and asset mismatches", async (t) => {
+  const f = pilotFixture(t);
+  const wrongCatalog = structuredClone(catalog);
+  wrongCatalog.tables[0].forced = false;
+  await assert.rejects(
+    postdeploy([], f.env, {
+      ...f.deps,
+      catalog: () => wrongCatalog,
+      fetcher: () => assert.fail("catalog mismatch must fail before HTTP IO"),
+    }),
+    /RLS not enforced/,
+  );
+  for (const [route, response, pattern] of [
+    [
+      "/api/healthz",
+      {
+        status: "ok",
+        buildRevision: "b".repeat(40),
+        contractVersion: f.manifest.contractVersion,
+      },
+      /source mismatch/,
+    ],
+    [
+      "/api/healthz",
+      { status: "ok", buildRevision: revision, contractVersion: "wrong" },
+      /contract mismatch/,
+    ],
+    [
+      "/api/healthz",
+      { status: "ok", maintenance: true },
+      /not real API readiness/,
+    ],
+    ["/api/readyz", { status: "not-ready" }, /not ready/],
+    ["/index.html", "changed page", /asset mismatch/],
+  ]) {
+    await assert.rejects(
+      postdeploy([], f.env, {
+        ...f.deps,
+        fetcher: (url, options) =>
+          url.pathname === route
+            ? Promise.resolve(
+                typeof response === "string"
+                  ? new Response(response)
+                  : Response.json(response),
+              )
+            : f.deps.fetcher(url, options),
+      }),
+      pattern,
+    );
+  }
+});
+
+test("pilot requires a full source revision and a CI production target even with a trusted manifest digest", async (t) => {
+  const f = pilotFixture(t);
+  for (const [manifest, pattern] of [
+    [
+      { ...f.manifest, source: { revision: revision.slice(0, 7) } },
+      /full source revision/,
+    ],
+    [{ ...f.manifest, mobile: undefined }, /CI mobile production target/],
+  ]) {
+    const bytes = JSON.stringify(manifest);
+    writeFileSync(f.env.RELEASE_MANIFEST, bytes);
+    await assert.rejects(
+      postdeploy(
+        [],
+        { ...f.env, RELEASE_MANIFEST_SHA256: digest(bytes) },
+        {
+          catalog: () =>
+            assert.fail("incomplete manifest must fail before database IO"),
+          fetcher: () =>
+            assert.fail("incomplete manifest must fail before HTTP IO"),
+        },
+      ),
+      pattern,
+    );
+  }
+});
+
+test("pilot accepts an independently hash-bound catalog capture without a production credential", async (t) => {
+  const f = pilotFixture(t);
+  const file = path.join(f.root, "pilot-catalog.json");
+  const bytes = JSON.stringify({
+    format: 1,
+    kind: "security-catalog-capture",
+    capturedAt: new Date().toISOString(),
+    manifestSha256: f.env.RELEASE_MANIFEST_SHA256,
+    targetOrigin: f.env.RELEASE_BASE_URL,
+    catalog,
+  });
+  writeFileSync(file, bytes);
+  const env = {
+    ...f.env,
+    DATABASE_URL: undefined,
+    RELEASE_SECURITY_CATALOG_SHA256: digest(bytes),
+  };
+  const deps = {
+    ...f.deps,
+    catalog: () =>
+      assert.fail("capture verification must not connect to a database"),
+  };
+  await postdeploy(["--catalog-file", file], env, deps);
+  await assert.rejects(
+    postdeploy(
+      ["--catalog-file", file],
+      {
+        ...env,
+        RELEASE_SECURITY_CATALOG_SHA256: undefined,
+      },
+      deps,
+    ),
+    /independently trusted/,
+  );
+  await assert.rejects(
+    postdeploy(
+      ["--catalog-file", file],
+      {
+        ...env,
+        RELEASE_SECURITY_CATALOG_SHA256: "0".repeat(64),
+      },
+      deps,
+    ),
+    /checksum mismatch/,
+  );
+});
+
+test("ordinary governed postdeploy is real API readiness only after explicit RUN and keeps ingress held", async (t) => {
+  const f = fixture(t);
+  await assert.rejects(postdeploy([], f.env, f.deps), /requires RUN/);
   const runEnv = {
     ...f.env,
     RELEASE_RUNTIME_STATE: "RUN",

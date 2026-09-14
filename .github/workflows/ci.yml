@@ -274,30 +274,18 @@ jobs:
           DRILL_CONFIRM_TARGET: meridian_drill_${{ github.run_id }}_${{ github.run_attempt }}
           DRILL_DATABASE_URL: postgresql://meridian:meridian@127.0.0.1:5432/meridian_drill_${{ github.run_id }}_${{ github.run_attempt }}
 
-      - name: Build landing
-        run: pnpm --filter @workspace/landing run build
-
-      - name: Build console
-        run: pnpm --filter @workspace/console run build
-
-      - name: Build SME app
-        run: pnpm --filter @workspace/sme-compliance run build
-
-      - name: Build buyer portal
-        run: pnpm --filter @workspace/buyer-portal run build
-
-      - name: Build penalty calculator
-        run: pnpm --filter @workspace/penalty-calculator run build
-
   # End-to-end user journeys against real builds and a real database — runs
-  # the full journey suite; see scripts/src/e2e/journeys/ for the current
-  # inventory.
+  # independently of quality-gate. Only release-artifact may qualify these
+  # exact bytes for deployment, after both jobs succeed in this attempt.
   e2e:
-    needs: quality-gate
     runs-on: ubuntu-latest
     # Local catalogue rendering added ~171s (excluding its build), route budgets ~34s.
-    # Include browser installation, both build passes and DB journeys on slower runners.
+    # Include browser installation, catalogue builds and DB journeys on slower runners.
     timeout-minutes: 35
+    outputs:
+      candidate-id: ${{ steps.tested-candidate.outputs.artifact-id }}
+      candidate-sha256: ${{ steps.candidate-identity.outputs.candidate_sha256 }}
+      manifest-sha256: ${{ steps.candidate-identity.outputs.manifest_sha256 }}
 
     services:
       postgres:
@@ -357,17 +345,20 @@ jobs:
 
       - name: Build frontends
         run: |
-          BASE_PATH=/ PORT=3000 pnpm --filter @workspace/landing run build
-          BASE_PATH=/console/ PORT=3000 pnpm --filter @workspace/console run build
-          BASE_PATH=/app/ PORT=3000 pnpm --filter @workspace/sme-compliance run build
-          BASE_PATH=/buyer/ PORT=3000 pnpm --filter @workspace/buyer-portal run build
-          BASE_PATH=/penalty-calculator/ PORT=3000 pnpm --filter @workspace/penalty-calculator run build
+          BASE_PATH=/ PORT=3000 pnpm --filter @workspace/landing run build --manifest
+          BASE_PATH=/console/ PORT=3000 pnpm --filter @workspace/console run build --manifest
+          BASE_PATH=/app/ PORT=3000 pnpm --filter @workspace/sme-compliance run build --manifest
+          BASE_PATH=/buyer/ PORT=3000 pnpm --filter @workspace/buyer-portal run build --manifest
+          BASE_PATH=/penalty-calculator/ PORT=3000 pnpm --filter @workspace/penalty-calculator run build --manifest
 
       - name: Verify landing and login accessibility across public states
         run: node --test artifacts/landing/e2e/accessibility.test.mjs
 
       - name: Verify signed-in workspace visuals and keyboard focus
         run: node --test lib/web-ui/src/platform-visual.browser.test.mjs
+
+      - name: Verify shared Clerk and integration settings dialogs
+        run: node --test scripts/src/e2e/clerk-integration-refactor.test.mjs
 
       - name: Verify guided onboarding and operational workspace usability
         run: pnpm run test:workspace-usability
@@ -396,7 +387,15 @@ jobs:
         run: node scripts/src/e2e/state-catalogue/run.mjs
 
       - name: Enforce lazy route and entry bundle budgets
-        run: node scripts/src/e2e/state-catalogue/route-budget.mjs
+        run: node scripts/src/e2e/state-catalogue/route-budget.mjs --use-built
+
+      - name: Keep CI bundle metadata out of published packages
+        run: |
+          for app in landing console sme-compliance buyer-portal penalty-calculator; do
+            mkdir -p "tmp/route-budget-r198/$app/.vite"
+            mv "artifacts/$app/dist/public/.vite/manifest.json" "tmp/route-budget-r198/$app/.vite/manifest.json"
+            rmdir "artifacts/$app/dist/public/.vite"
+          done
 
       - name: Run E2E journeys
         run: pnpm --filter @workspace/scripts run e2e
@@ -404,11 +403,17 @@ jobs:
       - name: Stamp tested immutable build manifest
         run: node scripts/src/ops/build-manifest.mjs
 
-      - name: Preserve tested release artifact
+      - name: Record tested candidate identity
+        id: candidate-identity
+        run: node scripts/src/ops/ci-release-artifact.mjs record
+
+      - name: Preserve tested candidate
+        id: tested-candidate
         uses: actions/upload-artifact@v4
         with:
-          name: meridian-release-${{ github.sha }}
+          name: meridian-tested-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
+          retention-days: 7
           # The inventory hashes hidden assets too; do not omit them in transport.
           include-hidden-files: true
           path: |
@@ -435,9 +440,59 @@ jobs:
             tmp/control-centre-a11y-r198/**
             tmp/notification-trigger-contrast/**
             tmp/platform-refinement/**
+            tmp/clerk-integration-refactor/**
             tmp/first-invoice/**
             tmp/business-details/**
             tmp/workspace-usability/**
             tmp/workspace-usability-hooks/**
             tmp/workspace-team-work/**
             tmp/workspace-created-task/**
+
+  # No install, rebuild, restamp, database access or execution of downloaded code.
+  # The final artifact exists only after both independent gates have succeeded.
+  release-artifact:
+    needs: [quality-gate, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Require successful same-run gates and candidate identity
+        run: node scripts/src/ops/ci-release-artifact.mjs admission
+        env:
+          QUALITY_RESULT: ${{ needs.quality-gate.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          CI_CANDIDATE_ID: ${{ needs.e2e.outputs.candidate-id }}
+          CI_CANDIDATE_SHA256: ${{ needs.e2e.outputs.candidate-sha256 }}
+          RELEASE_MANIFEST_SHA256: ${{ needs.e2e.outputs.manifest-sha256 }}
+
+      - name: Download exact tested candidate outside the checkout
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.e2e.outputs.candidate-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/tested-candidate
+
+      - name: Verify tested immutable build manifest
+        run: node scripts/src/ops/ci-release-artifact.mjs verify
+        env:
+          QUALITY_RESULT: ${{ needs.quality-gate.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          CI_CANDIDATE_ID: ${{ needs.e2e.outputs.candidate-id }}
+          CI_CANDIDATE_SHA256: ${{ needs.e2e.outputs.candidate-sha256 }}
+          RELEASE_MANIFEST_SHA256: ${{ needs.e2e.outputs.manifest-sha256 }}
+          CI_CANDIDATE_DIR: ${{ runner.temp }}/tested-candidate
+
+      - name: Preserve tested release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meridian-release-${{ github.sha }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/tested-candidate/release/build-manifest.json*
+            ${{ runner.temp }}/tested-candidate/artifacts/*/dist/**
