@@ -5,7 +5,14 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { ServerInvoiceDraft } from "./invoice-draft-api";
 import { useInvoiceDrafts } from "./use-invoice-drafts";
-import { emptyInvoiceDraft, listDraftRecoveries } from "./invoice-draft";
+import {
+  draftStorageKey,
+  emptyInvoiceDraft,
+  listDraftRecoveries,
+  saveDraftRecovery,
+  saveInvoiceDraft,
+  type DraftRecovery,
+} from "./invoice-draft";
 
 const harness = vi.hoisted(() => ({
   me: { userId: "user", firmId: "firm", clientPartyId: "client" },
@@ -109,6 +116,77 @@ test("StrictMode aborts the replayed effect's GET and leaves the editor usable",
   expect(view.result.current.state.status).toBe("saved");
   expect(view.result.current.draft.invoiceNumber).toBe("usable");
   expect(harness.api.save).toHaveBeenCalledTimes(1);
+});
+
+test("cross-tab recovery changes refresh the list without recreating the active session", async () => {
+  const view = renderDrafts();
+  await waitFor(() => expect(view.result.current.state.status).toBe("empty"));
+  const session = view.result.current.session;
+  const scopeKey = view.result.current.scopeKey;
+  const recovery: DraftRecovery = {
+    version: 2,
+    id: crypto.randomUUID(),
+    writerId: crypto.randomUUID(),
+    revision: 0,
+    draft: { ...emptyInvoiceDraft(), invoiceNumber: "another tab" },
+    savedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+  };
+  const storageKey = `${scopeKey}:${recovery.id}:recovery:${recovery.writerId}`;
+  act(() => {
+    saveDraftRecovery(scopeKey, recovery);
+    window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
+  });
+  expect(view.result.current.recoveries).toContainEqual(recovery);
+  expect(view.result.current.session).toBe(session);
+  expect(harness.api.get).toHaveBeenCalledTimes(1);
+  act(() => {
+    localStorage.removeItem(storageKey);
+    window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
+  });
+  expect(view.result.current.recoveries).not.toContainEqual(recovery);
+  expect(view.result.current.session).toBe(session);
+});
+
+test("saved recoveries and legacy drafts stay scoped across account changes", async () => {
+  saveInvoiceDraft(draftStorageKey("user", "firm"), {
+    ...emptyInvoiceDraft(),
+    invoiceNumber: "first account legacy",
+  });
+  saveInvoiceDraft(draftStorageKey("other-user", "firm"), {
+    ...emptyInvoiceDraft(),
+    invoiceNumber: "second account legacy",
+  });
+  const view = renderDrafts();
+  await waitFor(() => expect(view.result.current.state.status).toBe("empty"));
+  const session = view.result.current.session;
+  expect(view.result.current.legacy?.draft.invoiceNumber).toBe(
+    "first account legacy",
+  );
+  act(() =>
+    view.result.current.setDraft({
+      ...emptyInvoiceDraft(),
+      invoiceNumber: "saved copy",
+    }),
+  );
+  await act(async () => {
+    expect(await session.save()).toBe(true);
+  });
+  expect(
+    view.result.current.recoveries.some(
+      (copy) => copy.draft.invoiceNumber === "saved copy",
+    ),
+  ).toBe(true);
+  harness.me = { ...harness.me };
+  view.rerender();
+  expect(view.result.current.session).toBe(session);
+  harness.me = { ...harness.me, userId: "other-user" };
+  view.rerender();
+  expect(view.result.current.recoveries).toEqual([]);
+  expect(view.result.current.legacy?.draft.invoiceNumber).toBe(
+    "second account legacy",
+  );
+  expect(view.result.current.session).not.toBe(session);
 });
 
 test.each(["logout", "navigation", "scope change"])(

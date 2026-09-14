@@ -76,7 +76,7 @@
     "artifacts/api-server/src/modules/invoice/confirmations.ts": {
       "Async function 'recordConfirmation'": [25]
     },
-    "artifacts/api-server/src/modules/pipeline/pipeline.ts": {
+    "artifacts/api-server/src/modules/pipeline/submission.ts": {
       "Async function 'finalizeInvoiceSubmit'": [23]
     },
     "artifacts/api-server/src/modules/rails/fake-rail.ts": {
@@ -119,9 +119,6 @@
     },
     "artifacts/console/src/pages/catalogue.tsx": {
       "Function 'Catalogue'": [29]
-    },
-    "artifacts/console/src/pages/clerk-claims.tsx": {
-      "Function 'ClerkClaims'": [30]
     },
     "artifacts/console/src/pages/clerk/use-clerk-workspace.tsx": {
       "Function 'useClerkWorkspace'": [24]

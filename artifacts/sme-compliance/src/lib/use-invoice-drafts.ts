@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -38,11 +39,20 @@ export function useInvoiceDrafts() {
     scopeKey: string;
     recovery: DraftRecovery;
   }>();
-  const [catalogueVersion, setCatalogueVersion] = useState(0);
-  const recoveries = useMemo(
-    () => (scopeKey ? listDraftRecoveries(scopeKey) : []),
-    [scopeKey, catalogueVersion],
-  );
+  const [localCatalogue, setLocalCatalogue] = useState(() => ({
+    scopeKey,
+    items: scopeKey ? listDraftRecoveries(scopeKey) : [],
+  }));
+  const refreshRecoveries = useCallback(() => {
+    setLocalCatalogue({
+      scopeKey,
+      items: scopeKey ? listDraftRecoveries(scopeKey) : [],
+    });
+  }, [scopeKey]);
+  useEffect(refreshRecoveries, [refreshRecoveries]);
+  // Never display another account's catalogue while the refresh effect catches up.
+  const recoveries =
+    localCatalogue.scopeKey === scopeKey ? localCatalogue.items : [];
   const session = useMemo(
     () =>
       new InvoiceDraftSession(
@@ -81,8 +91,7 @@ export function useInvoiceDrafts() {
       if (event.key === submissionStorageKey(scopeKey, id))
         session.refreshSubmission();
       if (event.key === `${scopeKey}:${id}:notice`) session.externalChange();
-      if (event.key?.startsWith(`${scopeKey}:`))
-        setCatalogueVersion((version) => version + 1);
+      if (event.key?.startsWith(`${scopeKey}:`)) refreshRecoveries();
     };
     const onHidden = () => {
       if (document.visibilityState === "hidden") {
@@ -114,7 +123,7 @@ export function useInvoiceDrafts() {
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onHidden);
     };
-  }, [session, scopeKey, clientId, id]);
+  }, [session, scopeKey, clientId, id, refreshRecoveries]);
   useEffect(() => {
     if (!state.dirty || state.status !== "local") return;
     const timer = setTimeout(() => void session.save(), 400);
@@ -125,9 +134,16 @@ export function useInvoiceDrafts() {
       void queryClient.invalidateQueries({
         queryKey: ["invoice-drafts", scopeKey],
       });
-      setCatalogueVersion((v) => v + 1);
+      refreshRecoveries();
     }
-  }, [state.status, state.revision, scopeKey, queryClient, session]);
+  }, [
+    state.status,
+    state.revision,
+    scopeKey,
+    queryClient,
+    session,
+    refreshRecoveries,
+  ]);
   const catalogue = useInfiniteQuery({
     queryKey: ["invoice-drafts", scopeKey],
     queryFn: ({ pageParam, signal }) =>
@@ -174,10 +190,10 @@ export function useInvoiceDrafts() {
     setSeed(recovery ? { scopeKey, recovery } : undefined);
     setUrlId(draftId);
   };
+  const legacyKey = me ? draftStorageKey(me.userId, me.firmId) : "";
   const legacy = useMemo(
-    () =>
-      me ? loadInvoiceDraft(draftStorageKey(me.userId, me.firmId)) : undefined,
-    [me?.userId, me?.firmId],
+    () => (legacyKey ? loadInvoiceDraft(legacyKey) : undefined),
+    [legacyKey],
   );
   return {
     session,

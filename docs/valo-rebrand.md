@@ -11,7 +11,8 @@ Named demo businesses retain their separate fixture identities.
 This is a presentation change with additive compatibility support, not a
 database, identity-provider, or mobile signing migration. It does not change
 tenant isolation, permissions, consent, audit evidence, or approval boundaries.
-The API contract version is `0.102.0`; regenerate the clients from OpenAPI and
+The current API contract version is defined in
+[OpenAPI](../lib/api-spec/openapi.yaml); regenerate the clients from it and
 promote matching API and web artifacts through the existing
 [release path](operations.md). Existing rollback qualifications still apply.
 

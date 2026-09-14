@@ -165,7 +165,7 @@ test("ordinary shutdown waits for active work before closing the pool", async ()
 
 test("a fatal SIGTERM keeps its nonzero exit, ordinary SIGTERM stays zero, and the old opt-out is gone", async () => {
   const pipelineSource = readFileSync(
-    new URL("../modules/pipeline/pipeline.ts", import.meta.url),
+    new URL("../modules/pipeline/scheduler.ts", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(

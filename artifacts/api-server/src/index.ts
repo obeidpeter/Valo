@@ -17,6 +17,7 @@ import { seedPlatform } from "./bootstrap/seed";
 import { disableProductionDemoIdentities } from "./bootstrap/security";
 import { provisionProductionPilotOperator } from "./bootstrap/pilot-operator";
 import { assertEvidenceGuardrails } from "./bootstrap/evidence-guardrails";
+import { PRODUCTION_RECOVERY_GUIDANCE } from "./bootstrap/recovery-guidance";
 import { assertSessionSigningConfigured } from "./modules/auth/session";
 import { assertPublicAppUrlConfigured } from "./lib/public-app-url";
 import { markReady, markUnready } from "./lib/readiness";
@@ -39,8 +40,8 @@ if (Number.isNaN(port) || port <= 0) {
 // Apply the hand-written guardrail migrations (RLS policies, append-only
 // triggers) to the production database on boot. They are NOT part of the
 // Drizzle schema, so Replit's Publish schema-diff never creates them — without
-// this, every guardrail added after the one-time dev->prod copy silently never
-// reaches production. Safety properties:
+// this, guardrails added after initial provisioning would not reach production.
+// Safety properties:
 //   - every migration `up` is idempotent (re-runnable), and the whole apply is
 //     serialized under a session advisory lock, so concurrent Autoscale
 //     instances booting at once cannot race;
@@ -72,9 +73,8 @@ async function applyProductionGuardrails(): Promise<void> {
     logger.error(
       { err },
       "SECURITY: could not apply guardrail migrations to production; " +
-        "RLS/append-only protections may be missing or stale. Fix the error " +
-        "or run `pnpm --filter @workspace/db run migrate` with the production " +
-        "DATABASE_URL.",
+        "RLS/append-only protections may be missing or stale. Readiness remains blocked. " +
+        PRODUCTION_RECOVERY_GUIDANCE,
     );
     throw err;
   }
@@ -167,11 +167,9 @@ async function verifyProductionGuardrails(): Promise<void> {
         { policies, triggers, uncovered, missingIndexes },
         "SECURITY: production tenant-isolation guardrails are MISSING or " +
           "incomplete (RLS policies / append-only triggers / uncovered " +
-          "tenant-keyed tables listed above). Apply the guardrail migrations " +
-          "to this database (pnpm --filter @workspace/db run migrate with the " +
-          "production DATABASE_URL, or a Publish dev->prod copy). Tenant " +
-          "isolation is NOT fully enforced at the data layer until this is " +
-          "clean.",
+          "tenant-keyed tables listed above). Tenant isolation is not fully " +
+          "enforced and readiness remains blocked. " +
+          PRODUCTION_RECOVERY_GUIDANCE,
       );
       throw new Error(
         `Production guardrails incomplete: ${policies} policies, ${triggers} triggers, uncovered=${uncovered.join(",")}, missingIndexes=${missingIndexes.join(",")}`,
@@ -206,14 +204,16 @@ async function ensureRlsRoleAssumable(): Promise<void> {
     } else if (status === "role-missing") {
       logger.error(
         "SECURITY: role meridian_app is MISSING, so SET ROLE will fail and no " +
-          "tenant-scoped request can run. Provision the production database via " +
-          "Replit Publish 'overwrite data' (dev->prod copy).",
+          "tenant-scoped request can run. " +
+          PRODUCTION_RECOVERY_GUIDANCE,
       );
       throw new Error("Database role meridian_app is missing");
     } else {
       logger.error(
         "SECURITY: could not obtain the SET privilege on meridian_app; SET ROLE " +
-          "will keep failing. The login role needs ADMIN on meridian_app.",
+          "will keep failing. An authorized operator must review the login role's " +
+          "membership and ADMIN/SET options. " +
+          PRODUCTION_RECOVERY_GUIDANCE,
       );
       throw new Error("Database role meridian_app is not assumable");
     }

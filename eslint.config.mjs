@@ -62,7 +62,7 @@ export default tseslint.config(
     },
   },
 
-  // React hook correctness for the web apps and mobile. Hooks also live in
+  // React hook correctness for shared UI, every web app and mobile. Hooks also live in
   // plain .ts files (e.g. use-voice-recorder.ts), so cover both extensions.
   {
     files: [
@@ -70,14 +70,14 @@ export default tseslint.config(
       "artifacts/sme-compliance/src/**/*.{ts,tsx}",
       "artifacts/buyer-portal/src/**/*.{ts,tsx}",
       "artifacts/landing/src/**/*.{ts,tsx}",
+      "artifacts/penalty-calculator/src/**/*.{ts,tsx}",
       "artifacts/mobile/**/*.{ts,tsx}",
+      "lib/web-ui/src/**/*.{ts,tsx}",
     ],
     plugins: { "react-hooks": reactHooks },
     rules: {
       "react-hooks/rules-of-hooks": "error",
-      // Warn (not error) so a missing dep is visible in `pnpm run lint`
-      // output without blocking CI — each fix needs case-by-case judgement.
-      "react-hooks/exhaustive-deps": "warn",
+      "react-hooks/exhaustive-deps": "error",
     },
   },
 );

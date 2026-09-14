@@ -131,6 +131,56 @@ requires every package named here.
 | `@workspace/integrations-openai-ai-server` | The provisioned OpenAI-compatible client (base URL + key from env); imported only by `modules/clerk/provider.ts`, the gateway's provider layer. |
 | `@workspace/scripts`                       | e2e harness (Playwright), ux-snapshot, ops (backup/restore drill).                                                                              |
 
+## Dependency checks
+
+`pnpm run architecture:check` parses source imports with TypeScript rather
+than matching import-like text in comments and strings. It resolves relative
+imports, each package's inherited `tsconfig` aliases, and workspace package
+exports, including subpaths, wildcard exports and import/require conditions.
+Workspace resolution uses the source package manifests, not pnpm symlink state.
+Type-only dependencies remain in the graph. CommonJS `.cjs` and `.cts` sources,
+literal `require()` calls and literal lazy imports are included.
+
+The gate rejects cycles and unresolved local source imports. It also traces
+browser/mobile dependencies through shared barrels to prevent server-only
+imports, rejects domain-to-route dependencies through aliases or intermediate
+modules, and keeps model SDK access behind `modules/clerk/provider.ts`.
+Third-party packages and stylesheet/media/data imports are not source-graph
+edges. Computed module names are not evaluated; this check complements, rather
+than replaces, type checking, build verification and runtime tests.
+
+### Pipeline ownership
+
+`modules/pipeline/pipeline.ts` is the compatibility facade, not an owner of
+mutable state. Existing callers continue to use its public exports.
+
+| Module | Responsibility |
+| --- | --- |
+| `submission.ts` | Invoice preparation, rail calls, stamp persistence and finalization. |
+| `handlers.ts` | One shared registry for other outbox event handlers. |
+| `leases.ts` | Claiming, lease ownership checks and heartbeat renewal. |
+| `processing.ts` | One-event processing and atomic outcome bookkeeping. |
+| `reconciliation.ts` | Recovery of stuck submissions and held stamps. |
+| `queue-queries.ts` | Retry/dead-letter views, replay, retention and gauges. |
+| `policy.ts` | Retry horizons, backoff and transaction/lease timing policy. |
+| `scheduler.ts` | Worker lanes, scheduled passes, stop/resume and built-in sweep registration. |
+
+Internal modules import their direct owners, never the facade. Authority I/O
+stays between short database stages; finalization retains its lease fence and
+atomic writes. The concurrency, fault-matrix, soak and scheduled-work tests
+exercise the unchanged facade, while module-boundary tests pin shared registry
+identity and the placement of transaction-free I/O.
+
+### Claims page ownership
+
+`pages/clerk-claims.tsx` remains the route entry and compatibility export for
+existing helpers. Its `clerk-claims/` directory owns the form, facts editor,
+detail view, register, gaps, dialogs and drafting panels. `use-clerk-claims.ts`
+owns the React Query requests and workflow state; helpers/types are leaves so
+components never import back through the page. Maker-checker decisions,
+kill-switch handling, dirty-text confirmation and pending-action guards retain
+their existing behavior and are covered by component and request-lifecycle tests.
+
 ## Decision log
 
 Significance measured by cost of change: these are the decisions you cannot

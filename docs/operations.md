@@ -199,6 +199,43 @@ mismatch fail closed. A maintenance-forward RUN still requires its separate
 plan, held evidence, writer drain, and fresh activation permit; rollback
 approval never grants maintenance-forward authorization.
 
+## Production Readiness Recovery
+
+A healthy liveness endpoint is not proof that production can safely serve
+requests. Bootstrap keeps application traffic and workers blocked until its
+security checks pass. Do not bypass readiness to clear a deployment warning.
+
+1. Read the failing readiness check and the restricted deployment logs. Compare
+   the deployed revision and contract with the selected CI manifest. Check the
+   production `PUBLIC_APP_URL`, runtime state and manifest checksum without
+   exposing database, login or provider credentials.
+2. Keep development-data copying **OFF**. Never use Publish's overwrite-data
+   option to repair production, and do not run schema push against production.
+   Preserve the current workspace and stop development watchers before staging
+   all seven CI-built `dist` trees, the manifest and its sidecar for the exact
+   reviewed commit. Do not mix a local rebuild with an immutable CI artifact.
+3. Before a database repair, obtain explicit approval, a fresh private production
+   backup and a successful restore drill in a separate disposable database.
+   Confirm the recovery plan accounts for every writer and the candidate's
+   compatibility with the retained fallback. A backup alone is not verification.
+4. For supported structural changes, use the reviewed release path above and
+   inspect Replit's native Publish schema diff. Startup then applies the reviewed
+   guardrail migrations under an advisory lock and verifies them before opening
+   traffic. A missing constraint or role is not permission to copy development
+   data, grant broader privileges or run an arbitrary migration command online.
+5. Missing historical baseline tables, unsupported role repairs or changes that
+   cannot use the supported Publish flow require a separately approved offline
+   maintenance plan. Stop every API instance, worker, schedule and external
+   writer first. Follow the selected release profile's recovery requirements;
+   `--offline-bootstrap` is only the governed profile's documented escape hatch,
+   not a command to run against a live database. Keep writers stopped after a
+   failed repair or verification and use the approved recovery plan.
+6. Before restoring traffic, verify the expected revision and contract, readiness,
+   public asset integrity and the complete production security catalog using the
+   selected profile's verification procedure. Confirm the affected tenant-scoped
+   flows work and retain the verification evidence privately. Restore traffic
+   only after these checks succeed; keep development-data copying **OFF**.
+
 ## Database Safety
 
 - Migrations are additive and ordered. Never edit an applied migration.
