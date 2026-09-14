@@ -68,8 +68,8 @@ jobs:
       - name: Architecture boundaries
         run: pnpm run architecture:check
 
-      - name: Release, worker, load-tool and journey regression tests
-        run: node --test scripts/src/ops/*.test.mjs scripts/src/load-smoke.test.mjs scripts/src/e2e/service-worker.test.mjs scripts/src/e2e/journeys/*.test.mjs
+      - name: Quality, release, worker, load-tool and journey regression tests
+        run: node --test scripts/src/quality/*.test.mjs scripts/src/ops/*.test.mjs scripts/src/load-smoke.test.mjs scripts/src/e2e/service-worker.test.mjs scripts/src/e2e/journeys/*.test.mjs
 
       - name: Client transport and database deadline configuration tests
         run: node node_modules/tsx/dist/cli.mjs --test lib/api-client-react/test/custom-fetch.test.ts lib/db/src/connection-config.test.ts
